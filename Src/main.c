@@ -28,6 +28,8 @@
 #include <stdio.h>
 #include <stdint.h>
 
+#define LPS25HB_FIRST_SAMPLE_DELAY_MS 1100U
+
 void SystemClock_Config(void);
 
 typedef struct
@@ -125,6 +127,9 @@ int main(void)
   {
     SignalInitializationFailure();
   }
+
+  /* LPS25HB runs at 1 Hz: wait for a measurement made after power-on. */
+  LL_mDelay(LPS25HB_FIRST_SAMPLE_DELAY_MS);
 
   for (;;)
   {
