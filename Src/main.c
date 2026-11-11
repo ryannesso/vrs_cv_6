@@ -30,21 +30,64 @@
 
 void SystemClock_Config(void);
 
-static int32_t absolute_i32(int32_t value)
+typedef struct
 {
-  return value < 0 ? -value : value;
+  int16_t temperature_tenths;
+  uint16_t humidity_percent;
+  int32_t pressure_hundredths;
+  int32_t altitude_centimetres;
+} Measurement;
+
+static LPS25HB_Handle pressure_sensor;
+static HTS221_Handle climate_sensor;
+
+static int32_t Magnitude(int32_t number)
+{
+  return (number < 0) ? -number : number;
 }
 
-static void SendMeasurements(int16_t temperature_c_x10, uint16_t humidity_rh,
-                             int32_t pressure_hpa_x100, int32_t altitude_cm)
+static uint8_t StartSensors(void)
 {
-  char line[96];
-  int length = snprintf(line, sizeof(line), "%ld.%ld,%u,%ld.%02ld,%ld.%02ld\r\n",
-      (long)(temperature_c_x10 / 10), (long)absolute_i32(temperature_c_x10 % 10),
-      (unsigned)humidity_rh, (long)(pressure_hpa_x100 / 100),
-      (long)absolute_i32(pressure_hpa_x100 % 100), (long)(altitude_cm / 100),
-      (long)absolute_i32(altitude_cm % 100));
-  if (length > 0) USART2_Write((const uint8_t *)line, (uint16_t)length);
+  LPS25HB_RegisterBus(&pressure_sensor, I2C_MasterRead, I2C_MasterWrite);
+  HTS221_RegisterBus(&climate_sensor, I2C_MasterRead, I2C_MasterWrite);
+
+  return (uint8_t)(LPS25HB_Init(&pressure_sensor) && HTS221_Init(&climate_sensor));
+}
+
+static uint8_t ReadMeasurement(Measurement *measurement)
+{
+  if (!LPS25HB_ReadPressure(&pressure_sensor, &measurement->pressure_hundredths))
+  {
+    return 0U;
+  }
+
+  if (!HTS221_ReadValues(&climate_sensor, &measurement->temperature_tenths,
+                         &measurement->humidity_percent))
+  {
+    return 0U;
+  }
+
+  measurement->altitude_centimetres = LPS25HB_GetRelativeAltitudeCm(
+      &pressure_sensor, measurement->pressure_hundredths);
+  return 1U;
+}
+
+static void WriteMeasurement(const Measurement *measurement)
+{
+  char csv_row[96];
+  int length = snprintf(csv_row, sizeof(csv_row), "%ld.%ld,%u,%ld.%02ld,%ld.%02ld\r\n",
+      (long)(measurement->temperature_tenths / 10),
+      (long)Magnitude(measurement->temperature_tenths % 10),
+      (unsigned)measurement->humidity_percent,
+      (long)(measurement->pressure_hundredths / 100),
+      (long)Magnitude(measurement->pressure_hundredths % 100),
+      (long)(measurement->altitude_centimetres / 100),
+      (long)Magnitude(measurement->altitude_centimetres % 100));
+
+  if ((length > 0) && ((size_t)length < sizeof(csv_row)))
+  {
+    USART2_Write((const uint8_t *)csv_row, (uint16_t)length);
+  }
 }
 
 int main(void)
@@ -60,35 +103,26 @@ int main(void)
   MX_I2C1_Init();
   MX_USART2_UART_Init();
 
-  LPS25HB_Handle pressure_sensor = {0};
-  HTS221_Handle environment_sensor = {0};
-  int16_t temperature_c_x10;
-  uint16_t humidity_rh;
-  int32_t pressure_hpa_x100;
+  Measurement measurement;
 
-  LPS25HB_RegisterBus(&pressure_sensor, I2C_MasterRead, I2C_MasterWrite);
-  HTS221_RegisterBus(&environment_sensor, I2C_MasterRead, I2C_MasterWrite);
-
-  if (!LPS25HB_Init(&pressure_sensor) || !HTS221_Init(&environment_sensor))
+  if (StartSensors() == 0U)
   {
     USART2_WriteString("sensor initialization failed\r\n");
     while (1) { LL_GPIO_TogglePin(GPIOB, LL_GPIO_PIN_3); LL_mDelay(250U); }
   }
 
-  while (1)
+  for (;;)
   {
-	  if (LPS25HB_ReadPressure(&pressure_sensor, &pressure_hpa_x100) &&
-	      HTS221_ReadValues(&environment_sensor, &temperature_c_x10, &humidity_rh))
-	  {
-		  SendMeasurements(temperature_c_x10, humidity_rh, pressure_hpa_x100,
-			  LPS25HB_GetRelativeAltitudeCm(&pressure_sensor, pressure_hpa_x100));
-		  LL_GPIO_TogglePin(GPIOB, LL_GPIO_PIN_3);
-	  }
-	  else
-	  {
-		  USART2_WriteString("sensor read error\r\n");
-	  }
-	  LL_mDelay(1000U);
+    if (ReadMeasurement(&measurement) != 0U)
+    {
+      WriteMeasurement(&measurement);
+      LL_GPIO_TogglePin(GPIOB, LL_GPIO_PIN_3);
+    }
+    else
+    {
+      USART2_WriteString("sensor read error\r\n");
+    }
+    LL_mDelay(1000U);
   }
 }
 
