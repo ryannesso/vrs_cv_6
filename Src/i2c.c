@@ -1,17 +1,30 @@
 #include "i2c.h"
 
-static uint8_t I2C_WaitFor(uint32_t flag)
+static uint8_t I2C_WaitForFlag(uint32_t flag)
 {
-  uint32_t timeout = 1000000U;
-  while ((READ_BIT(I2C1->ISR, flag) == 0U) && (--timeout != 0U))
+  uint32_t retry_count = 1000000U;
+
+  while (retry_count-- != 0U)
   {
     if (LL_I2C_IsActiveFlag_NACK(I2C1) != 0U)
     {
       LL_I2C_ClearFlag_NACK(I2C1);
+      LL_I2C_GenerateStopCondition(I2C1);
       return 0U;
     }
+
+    if (READ_BIT(I2C1->ISR, flag) != 0U) return 1U;
   }
-  return timeout != 0U;
+
+  LL_I2C_GenerateStopCondition(I2C1);
+  return 0U;
+}
+
+static uint8_t I2C_FinishTransfer(void)
+{
+  if (I2C_WaitForFlag(LL_I2C_ISR_STOPF) == 0U) return 0U;
+  LL_I2C_ClearFlag_STOP(I2C1);
+  return 1U;
 }
 
 void MX_I2C1_Init(void)
@@ -29,9 +42,6 @@ void MX_I2C1_Init(void)
   LL_GPIO_Init(GPIOB, &gpio);
 
   LL_APB1_GRP1_EnableClock(LL_APB1_GRP1_PERIPH_I2C1);
-  NVIC_SetPriority(I2C1_EV_IRQn, NVIC_EncodePriority(NVIC_GetPriorityGrouping(), 0, 0));
-  NVIC_EnableIRQ(I2C1_EV_IRQn);
-
   init.PeripheralMode = LL_I2C_MODE_I2C;
   init.Timing = 0x2000090E;
   init.AnalogFilter = LL_I2C_ANALOGFILTER_ENABLE;
@@ -48,16 +58,14 @@ uint8_t I2C_MasterWrite(uint8_t address, uint8_t reg, const uint8_t *data, uint1
   uint16_t i;
   LL_I2C_HandleTransfer(I2C1, address, LL_I2C_ADDRSLAVE_7BIT, length + 1U,
       LL_I2C_MODE_AUTOEND, LL_I2C_GENERATE_START_WRITE);
-  if (I2C_WaitFor(LL_I2C_ISR_TXIS) == 0U) return 0U;
+  if (I2C_WaitForFlag(LL_I2C_ISR_TXIS) == 0U) return 0U;
   LL_I2C_TransmitData8(I2C1, reg);
   for (i = 0U; i < length; i++)
   {
-    if (I2C_WaitFor(LL_I2C_ISR_TXIS) == 0U) return 0U;
+    if (I2C_WaitForFlag(LL_I2C_ISR_TXIS) == 0U) return 0U;
     LL_I2C_TransmitData8(I2C1, data[i]);
   }
-  if (I2C_WaitFor(LL_I2C_ISR_STOPF) == 0U) return 0U;
-  LL_I2C_ClearFlag_STOP(I2C1);
-  return 1U;
+  return I2C_FinishTransfer();
 }
 
 uint8_t I2C_MasterRead(uint8_t address, uint8_t reg, uint8_t *data, uint16_t length)
@@ -67,23 +75,21 @@ uint8_t I2C_MasterRead(uint8_t address, uint8_t reg, uint8_t *data, uint16_t len
 
   LL_I2C_HandleTransfer(I2C1, address, LL_I2C_ADDRSLAVE_7BIT, 1U,
       LL_I2C_MODE_SOFTEND, LL_I2C_GENERATE_START_WRITE);
-  if (I2C_WaitFor(LL_I2C_ISR_TXIS) == 0U) return 0U;
+  if (I2C_WaitForFlag(LL_I2C_ISR_TXIS) == 0U) return 0U;
   LL_I2C_TransmitData8(I2C1, reg);
-  if (I2C_WaitFor(LL_I2C_ISR_TC) == 0U) return 0U;
+  if (I2C_WaitForFlag(LL_I2C_ISR_TC) == 0U) return 0U;
 
   LL_I2C_HandleTransfer(I2C1, address, LL_I2C_ADDRSLAVE_7BIT, length,
       LL_I2C_MODE_AUTOEND, LL_I2C_GENERATE_START_READ);
   for (i = 0U; i < length; i++)
   {
-    if (I2C_WaitFor(LL_I2C_ISR_RXNE) == 0U) return 0U;
+    if (I2C_WaitForFlag(LL_I2C_ISR_RXNE) == 0U) return 0U;
     data[i] = LL_I2C_ReceiveData8(I2C1);
   }
-  if (I2C_WaitFor(LL_I2C_ISR_STOPF) == 0U) return 0U;
-  LL_I2C_ClearFlag_STOP(I2C1);
-  return 1U;
+  return I2C_FinishTransfer();
 }
 
 void I2C1_EV_IRQHandler(void)
 {
-  /* Transfers are completed synchronously by I2C_MasterRead/Write. */
+  /* I2C transfers are polled by I2C_MasterRead and I2C_MasterWrite. */
 }
