@@ -90,6 +90,22 @@ static void WriteMeasurement(const Measurement *measurement)
   }
 }
 
+static void ReportSensorError(const char *message)
+{
+  USART2_WriteString(message);
+}
+
+static void SignalInitializationFailure(void)
+{
+  ReportSensorError("sensor initialization failed\r\n");
+
+  for (;;)
+  {
+    LL_GPIO_TogglePin(GPIOB, LL_GPIO_PIN_3);
+    LL_mDelay(250U);
+  }
+}
+
 int main(void)
 {
   LL_APB2_GRP1_EnableClock(LL_APB2_GRP1_PERIPH_SYSCFG);
@@ -107,8 +123,7 @@ int main(void)
 
   if (StartSensors() == 0U)
   {
-    USART2_WriteString("sensor initialization failed\r\n");
-    while (1) { LL_GPIO_TogglePin(GPIOB, LL_GPIO_PIN_3); LL_mDelay(250U); }
+    SignalInitializationFailure();
   }
 
   for (;;)
@@ -120,7 +135,7 @@ int main(void)
     }
     else
     {
-      USART2_WriteString("sensor read error\r\n");
+      ReportSensorError("sensor read error\r\n");
     }
     LL_mDelay(1000U);
   }
