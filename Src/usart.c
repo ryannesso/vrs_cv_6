@@ -1,5 +1,11 @@
 #include "usart.h"
 
+static void USART2_SendByte(uint8_t value)
+{
+  while (LL_USART_IsActiveFlag_TXE(USART2) == 0U) {}
+  LL_USART_TransmitData8(USART2, value);
+}
+
 void MX_USART2_UART_Init(void)
 {
   LL_USART_InitTypeDef usart = {0};
@@ -29,20 +35,25 @@ void MX_USART2_UART_Init(void)
 
 void USART2_Write(const uint8_t *data, uint16_t length)
 {
-  uint16_t index;
-  for (index = 0U; index < length; index++)
+  const uint8_t *end = data + length;
+
+  while (data < end)
   {
-    while (LL_USART_IsActiveFlag_TXE(USART2) == 0U) {}
-    LL_USART_TransmitData8(USART2, data[index]);
+    USART2_SendByte(*data);
+    data++;
   }
+
   while (LL_USART_IsActiveFlag_TC(USART2) == 0U) {}
 }
 
 void USART2_WriteString(const char *text)
 {
-  while (*text != '\0')
+  const char *cursor = text;
+
+  while (*cursor != '\0')
   {
-    USART2_Write((const uint8_t *)text, 1U);
-    text++;
+    cursor++;
   }
+
+  USART2_Write((const uint8_t *)text, (uint16_t)(cursor - text));
 }
